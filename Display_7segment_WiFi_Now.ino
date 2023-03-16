@@ -183,7 +183,7 @@ void IRAM_ATTR FlashInt()
 --------------------------------------------------------------------------------------*/
 void setup(void)
 {
-    //Serial.begin(115200);
+    Serial.begin(115200);
     delay(100);
 
     rs485.begin(9600, SERIAL_8N1, RXD2, TXD2);
@@ -341,12 +341,12 @@ void loop(void)
                     }
                     else if (CRC_met == 1) {
                         //Check CRC here
-                        Serial.println("Received packed:");
+                        /*Serial.println("Received packed:");
                         for (size_t i = 0; i < sizeof(received_pckt); i++)
                         {
                             Serial.print(received_pckt[i], HEX); Serial.print(' ');
                         }
-                        Serial.println(); Serial.println("--------------------------------------");
+                        Serial.println(); Serial.println("--------------------------------------");*/
                         uint16_t total_RCR = received_pckt[--met] << 8;
                         total_RCR = total_RCR | received_pckt[--met];
                         if (total_RCR == CRC_receive)
