@@ -7,14 +7,16 @@
 */
 
 /*--------------------------------------------------------------------------------------
-  Includes
+  Includes 
 --------------------------------------------------------------------------------------*/
 #include <esp_now.h>
 #include <WiFi.h>
 #include <EEPROM.h>
 #define EEPROM_SIZE 100
-#define INVERT_DISPLAY false 
+#define INVERT_DISPLAY true 
 #include <Rousis7segment.h>
+#include <Adafruit_NeoPixel.h>
+//#include "analogWrite.h"
 
 #define RXD2 16
 #define TXD2 17
@@ -26,12 +28,24 @@ static uint16_t CRC_receive = 0xffff;
 #define CRC_divisor	 0xA001
 uint8_t RS485_en = 0;
 //Fire up the DMD library as dmd
-#define DISPLAY_DIGITS 4
+#define DISPLAY_DIGITS 4    
+
+//we check if ESP32S3 Dev Module is defined, if not we define it
+#ifndef ESP32S3_DEV_MODULE
+#define BUZZER 14
+//Set LED myLED
+Rousis7segment myLED(4, 4, 5, 6, 7);
+#else
 #define BUZZER 15
 Rousis7segment myLED(4, 33, 26, 27, 14);    // Uncomment if not using OE pin
+#endif
 //--------------------------------------------------------------------------------------
+// Which pin on the Arduino is connected to the NeoPixels?
+#define PIN        48 
+Adafruit_NeoPixel pixels(1, PIN, NEO_GRB + NEO_KHZ800);
 //------------------------------------------------------------------------------
-uint8_t broadcastAddress1[] = { 0xB8, 0xD6, 0x1A, 0x35, 0x53, 0x48 };
+//Mac address = F4:12:FA:C1:8F:D8
+uint8_t broadcastAddress1[] = { 0xF4, 0x12, 0xFA, 0xC1, 0x8F, 0xD8 };
 String success; //10:97:BD:D4:59:C4
 esp_err_t result;
 //------------------------------------------------------------------------------
@@ -41,6 +55,7 @@ bool flash_on = false;
 bool Scan = false;
 uint8_t Address;
 uint8_t In_bytes_count = 0;
+unsigned long previousMillis = 0;
 
 char  Line1_buf[10] = { 0 };
 char  Line2_buf[10] = { 0 };
@@ -87,6 +102,7 @@ void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len) {
     memcpy(&Queue_receive, incomingData, sizeof(Queue_receive));
     Serial.print("Bytes received: ");
     Serial.println(len);
+
     out_queue = Queue_receive.queue;
     out_counter = Queue_receive.counter;
     out_category = Queue_receive.category;
@@ -102,8 +118,7 @@ void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len) {
     Serial.print("Instruction: ");
     Serial.println(Queue_receive.instruction);
     Serial.println("----------------------------------");
-
-    
+        
     char C = 0xff; uint8_t i = 0;
 
     char  Line_rec[11] = { "          " };
@@ -126,7 +141,7 @@ void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len) {
     }
     Serial.println();
     Serial.println("-----------------------------------");
-    if (!RS485_en)
+    if (RS485_en) //???
     {
         memccpy(Line1_buf, &Line_rec[0], 2, 4);
         myLED.print(Line1_buf, INVERT_DISPLAY);
@@ -134,7 +149,12 @@ void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len) {
         flash_on = true;
         flash_cnt = 24;
         buzzer_cnt = 6;
-        digitalWrite(BUZZER, HIGH);
+        //digitalWrite(BUZZER, HIGH);
+        //analogWrite(12, 128, 4000, 8, 0);
+        ledcWrite(1, 128); // Παράγει ημιτονικό (b%) σήμα PWM
+
+        pixels.setPixelColor(0, pixels.Color(0, 150, 0));
+        pixels.show();
     }
 }
 //-----------------------------------------------------------------------
@@ -172,9 +192,13 @@ void IRAM_ATTR FlashInt()
     }
     else {
         digitalWrite(BUZZER, LOW);
+       // digitalWrite(12, LOW);
+        ledcWrite(1, 0); // Παράγει ημιτονικό (b%) σήμα PWM
+        //analogWrite(12, 0, 4000, 8, 0);
     }
 
     portEXIT_CRITICAL_ISR(&falshMux);
+
 }
 
 /*--------------------------------------------------------------------------------------
@@ -184,7 +208,7 @@ void IRAM_ATTR FlashInt()
 void setup(void)
 {
     Serial.begin(115200);
-    delay(100);
+    delay(500);
 
     rs485.begin(9600, SERIAL_8N1, RXD2, TXD2);
     Serial.println("Project      :  Arduino_ESP32_RS485");
@@ -193,8 +217,9 @@ void setup(void)
     digitalWrite(RS485_PIN_DIR, RS485_READ);
     Serial.println("done");
 
-    pinMode(BUZZER, OUTPUT);
-    digitalWrite(BUZZER, LOW);
+    //setup BUZZER pin for PWM 2 KHz
+    ledcSetup(1, 2000, 8);
+    ledcAttachPin(BUZZER, 1);
 
     EEPROM.begin(EEPROM_SIZE);
     /*EEPROM.write(0, 33);
@@ -238,11 +263,13 @@ void setup(void)
     flash_timer = timerBegin(1, cpuClock, true);
     timerAttachInterrupt(flash_timer, &FlashInt, true);
     timerAlarmWrite(flash_timer, 100000, true);
-    timerAlarmEnable(flash_timer);
+    //timerAlarmEnable(flash_timer);
 
 
     delay(100);
 
+    pixels.setPixelColor(0, pixels.Color(50, 0, 10));
+    pixels.show();
 
     //EEPROM.end();
 
@@ -255,6 +282,7 @@ void setup(void)
     Serial.println("Start initialize...");
 
     myLED.displayEnable();     // This command has no effect if you aren't using OE pin
+    myLED.displayBrightness(255);
     myLED.normalMode();
 
     uint8_t n[4];
@@ -297,9 +325,15 @@ void setup(void)
     delay(500);
 
     myLED.print("----", INVERT_DISPLAY);
-
-    buzzer_cnt = 4;
     delay(100);
+
+    pinMode(12, OUTPUT);
+    ledcSetup(1, 4000, 8); //channel = 0, 200 Hz, ανάλυση 8 bits  - 1250
+
+    ledcWrite(1, 128); // Παράγει ημιτονικό (b%) σήμα PWM
+    //analogWrite(12, 128, 4000, 8, 0);    
+    buzzer_cnt = 4;    
+    //analogWrite(12, 0, 4000, 8, 0);
 
 }
 
@@ -365,6 +399,8 @@ void loop(void)
                                 flash_cnt = 24;
                                 buzzer_cnt = 6;
                                 digitalWrite(BUZZER, HIGH);
+                               // analogWrite(12, 128, 4000, 8, 0);
+                                ledcWrite(1, 128); // Παράγει ημιτονικό (b%) σήμα PWM
                                 Replay_OK();
                             }                            
                         }
@@ -372,6 +408,34 @@ void loop(void)
                     }
                 }
             }
+        }        
+    }
+
+    if (!buzzer_cnt) //Check to stop the buzzer
+    {
+        //analogWrite(12, 0, 4000, 8, 0);
+        ledcWrite(1, 0); // Παράγει ημιτονικό (b%) σήμα PWM
+    }
+
+    //tongle pixels white or black every 1000 millis()
+    if (millis() - previousMillis > 1000 && !flash_cnt) {
+        previousMillis = millis();
+        if (Scan)
+        {
+            pixels.setPixelColor(0, pixels.Color(50, 50, 50));
+        }
+        else {
+            pixels.setPixelColor(0, pixels.Color(0, 0, 0));
+        }
+        pixels.show();
+
+        //tongle scan
+        if (Scan)
+        {
+            Scan = false;
+        }
+        else {
+            Scan = true;
         }
     }
 }
